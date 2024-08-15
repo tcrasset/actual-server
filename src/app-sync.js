@@ -13,8 +13,8 @@ import { SyncProtoBuf } from '@actual-app/crdt';
 
 const app = express();
 app.use(errorMiddleware);
-app.use(express.json());
 app.use(express.raw({ type: 'application/actual-sync' }));
+app.use(express.json());
 
 export { app as handlers };
 
@@ -36,6 +36,7 @@ app.post('/sync', async (req, res) => {
   try {
     requestPb = SyncProtoBuf.SyncRequest.deserializeBinary(req.body);
   } catch (e) {
+    console.log('Error parsing sync request', e);
     res.status(500);
     res.send({ status: 'error', reason: 'internal-error' });
     return;
@@ -49,7 +50,11 @@ app.post('/sync', async (req, res) => {
   let messages = requestPb.getMessagesList();
 
   if (!since) {
-    throw new Error('`since` is required');
+    return res.status(422).send({
+      details: 'since-required',
+      reason: 'unprocessable-entity',
+      status: 'error',
+    });
   }
 
   let currentFiles = accountDb.all(
@@ -144,12 +149,10 @@ app.post('/user-get-key', (req, res) => {
   }
   let { encrypt_salt, encrypt_keyid, encrypt_test } = rows[0];
 
-  res.send(
-    JSON.stringify({
-      status: 'ok',
-      data: { id: encrypt_keyid, salt: encrypt_salt, test: encrypt_test },
-    }),
-  );
+  res.send({
+    status: 'ok',
+    data: { id: encrypt_keyid, salt: encrypt_salt, test: encrypt_test },
+  });
 });
 
 app.post('/user-create-key', (req, res) => {
@@ -300,6 +303,8 @@ app.get('/download-user-file', async (req, res) => {
   let accountDb = getAccountDb();
   let fileId = req.headers['x-actual-file-id'];
   if (typeof fileId !== 'string') {
+    // FIXME: Not sure how this cannot be a string when the header is
+    // set.
     res.status(400).send('Single file ID is required');
     return;
   }
@@ -376,24 +381,24 @@ app.get('/get-user-file-info', (req, res) => {
     'SELECT * FROM files WHERE id = ? AND deleted = FALSE',
     [fileId],
   );
+
   if (rows.length === 0) {
-    res.send(JSON.stringify({ status: 'error' }));
+    res.status(400).send({ status: 'error', reason: 'file-not-found' });
     return;
   }
+
   let row = rows[0];
 
-  res.send(
-    JSON.stringify({
-      status: 'ok',
-      data: {
-        deleted: row.deleted,
-        fileId: row.id,
-        groupId: row.group_id,
-        name: row.name,
-        encryptMeta: row.encrypt_meta ? JSON.parse(row.encrypt_meta) : null,
-      },
-    }),
-  );
+  res.send({
+    status: 'ok',
+    data: {
+      deleted: row.deleted,
+      fileId: row.id,
+      groupId: row.group_id,
+      name: row.name,
+      encryptMeta: row.encrypt_meta ? JSON.parse(row.encrypt_meta) : null,
+    },
+  });
 });
 
 app.post('/delete-user-file', (req, res) => {
